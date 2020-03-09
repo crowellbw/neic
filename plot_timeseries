@@ -1,0 +1,15 @@
+#!/bin/bash
+export PATH=/opt/gmt/gmt/bin:$PATH
+  NAME=/home/neic/gnssoutput/20191112/timeseries/P595_20191112.eps
+rm $NAME
+gmt set FONT_ANNOT_PRIMARY 16p,Helvetica,black
+gmt set PS_PAGE_ORIENTATION landscape
+gmt set PS_MEDIA A2
+gmt set MAP_TITLE_OFFSET 0.25c
+gmt set FONT_LABEL 16p,Helvetica,black
+gmt set FONT_TITLE 16p,Helvetica
+psbasemap -R0/60/-0.019476105514734384/0.016698805159525883 -JX6i/3i -Ba25f5:"Time (s)":/a0.5f0.05:"East (m)"::."P595, 20191112_001000":WeSn -Y13i -K > $NAME
+awk '{print $2, $3}' /home/neic/gnssoutput/20191112/timeseries/P595_20191112_001000.txt |psxy -W3 -R -J -O -K >> $NAME
+awk '{print $2, $4}' /home/neic/gnssoutput/20191112/timeseries/P595_20191112_001000.txt |psxy -W3 -R0/60/-0.0014553275084343887/0.047893462565622075 -JX6i/3i -Ba25f5:"Time (s)":/a0.5f0.05:"North (m)":WeSn -O -K -Y-4.25i >> $NAME
+awk '{print $2, $5}' /home/neic/gnssoutput/20191112/timeseries/P595_20191112_001000.txt |psxy -W3 -R0/60/-0.07593260212065918/0.00730895758858577 -JX6i/3i -Ba25f5:"Time (s)":/a0.5f0.05:"Up (m)":WeSn -O -K -Y-4.25i >> $NAME
+exit 0

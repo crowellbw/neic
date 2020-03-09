@@ -1,0 +1,253 @@
+#!/home/crowellb/anaconda3/bin/python3
+#get_timeseries
+#This program takes in either an event id, user defined earthquake parameters, or single station parameters
+#and outputs the GNSS time series from the Mongo database.
+#################################################################################################################
+from datetime import datetime, timedelta
+import get_usgsevent
+import time
+import os
+import GPS_tools
+import json
+import numpy
+import math
+import pymongo
+from os.path import expanduser
+home = expanduser("~")
+from monary import Monary
+from gnss_datahandling import readmetadata
+import sys
+import gmtplotting
+import calendar
+import warnings
+if not sys.warnoptions:
+	warnings.simplefilter("ignore")
+sitemetadata = '/home/crowellb/PANGA/stationmetadata/siteinfo.json'
+#datadir = '/home/crowellb/PANGA/data/'
+#maxtimewindow=180 #Time, in seconds after origin time, to calculate PGD values
+################################################################################################################
+print ("Welcome to get_timeseries, v1.0")
+print ("Do you want get stations around an existing event id (enter 0), get stations around manually entered event information (enter 1), or get a single station starting at a given time (enter 2)")
+eventind = input()
+if (int(eventind) == 0):
+	print ("Using existing event id, enter id from USGS:")
+	eventid = input()
+	print ("Using event id " + eventid)
+	a = get_usgsevent.eventinformation(eventid)
+	if (a[5] == 0):
+		print ("Event id " + eventid + " does not exist at USGS, try again")
+	if (a[5] == 1):
+		m = a[0]
+		lon = a[2]
+		lat = a[3]
+		dep = a[4]
+		ot = datetime.utcfromtimestamp(a[1]/1000)
+		unixot = int(a[1]/1000)
+		eqname = eventid
+		print ("Event id " + eventid + " found.")
+		print ("Event magnitude: " + str(m))
+		print ("Event location (lon,lat,dep(km)): " + str(lon) + ", " + str(lat) + ", " + str(dep))
+		print ("Event origin time: " + str(ot))
+		print ("Event origin time (unix): " + str(unixot))
+
+		#Epicentral Distance Considered
+		print ("Distance to consider (km):")
+		distmax = input()
+		distmax = float(distmax)
+		print ("Post earthquake time to output (in seconds):")
+		posttimewindow = input()
+		posttimewindow = int(posttimewindow)
+		print ("Plot timeseries, 0 for no, 1 for yes:")
+		plottseries = input()
+
+if (int(eventind) == 1):
+        print ("Using manually entered event")
+        print ("Enter latitude:")
+        lat = input()
+        lat = float(lat)
+        print ("Enter longitude:")
+        lon = input()
+        lon = float(lon)
+        print ("Enter Depth (km, positive down):")
+        dep = input()
+        dep = float(dep)
+        print ("Enter Origin Time (format, in UTC, is YYYY-MN-DY HR:MN:SC):")
+        print ('Enter time as YYYY-MN-DY HR:MN:SC')
+        timestamp = input()
+        struct_time = time.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        ot = datetime.fromtimestamp(time.mktime(struct_time))
+        print ("Event origin time (in UTC): " + str(ot))
+        print ("Event origin time (unix): " + str(calendar.timegm(struct_time)))
+        unixot = int(calendar.timegm(struct_time))
+        print ("Enter name for earthquake (to be used for output file):")
+        eqname = input()
+        print ("Event location (lon,lat,dep(km)): " + str(lon) + ", " + str(lat) + ", " + str(dep))
+
+        #Epicentral Distance Considered
+        print ("Distance to consider (km):")
+        distmax = input()
+        distmax = float(distmax)
+        print ("Post earthquake time to output (in seconds):")
+        posttimewindow = input()
+       	posttimewindow = int(posttimewindow)
+        print ("Plot timeseries, 0 for no, 1 for yes:")
+        plottseries = input()
+if (int(eventind) < 2):
+	#Output folder
+	outdir = home + '/gnssoutput'
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+	#Earthquake Name
+	outdireq = home + '/gnssoutput/' + eqname
+	if not os.path.exists(outdireq):
+        	os.makedirs(outdireq)
+	#Data Directory
+	outdirdata = home + '/gnssoutput/' + eqname + '/timeseries'
+	if not os.path.exists(outdirdata):
+        	os.makedirs(outdirdata)
+	print ("Using output directory for time series: " + outdirdata)
+if (int(eventind) == 2):
+	print ("Downloading single station at given time")
+	print ("Enter 4-character site id:")
+	site = input()
+	site=site.upper()
+	print ("Looking for site " + site)
+	client = pymongo.MongoClient()
+	db = client["gpsdatabase"]
+	currentcollection = db[site] 
+	with Monary("127.0.0.1") as monary:
+		dt0 = monary.query("gpsdatabase",site,{},["x", "y", "z", "t"],["float64"] * 4)
+	x = dt0[0]
+	y = dt0[1]
+	z = dt0[2]
+	t = dt0[3]
+	if (len(t) > 0):
+		print ("Enter Start Time (format, in UTC, is YYYY-MN-DY HR:MN:SC):")
+		timestamp = input()
+		struct_time = time.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+		ot = datetime.fromtimestamp(time.mktime(struct_time))
+		print ("Event origin time (in UTC): " + str(ot))
+		print ("Event origin time (unix): " + str(calendar.timegm(struct_time)))
+		unixot = int(calendar.timegm(struct_time))
+		print ("Enter number of seconds to download:")
+		posttimewindow = input()
+		posttimewindow = int(posttimewindow)
+		N = numpy.nan*numpy.ones([1,int(posttimewindow)+1])
+		E = numpy.nan*numpy.ones([1,int(posttimewindow)+1])
+		U = numpy.nan*numpy.ones([1,int(posttimewindow)+1])
+		TIMER = numpy.arange(int(unixot),int(unixot)+int(posttimewindow)+1)
+		[lat,lon,alt]=GPS_tools.ecef2lla(float(x[0]),float(y[0]),float(z[0]))
+		latsta = float(lat)*180/math.pi
+		lonsta = float(lon)*180/math.pi
+		a2 = numpy.where((t >= int(unixot)) & (t <= int(unixot) + int(posttimewindow)))[0]
+		a0 = numpy.where(t == int(unixot))[0]
+		if (len(a0) > 0):
+			for j in range (0, len(a2)):
+				dx = x[a2[j]] - x[a0[0]]
+				dy = y[a2[j]] - y[a0[0]]
+				dz = z[a2[j]] - z[a0[0]]
+				[dn,de,du] = GPS_tools.dxyz2dneu(dx,dy,dz,latsta,lonsta)
+				a3 = numpy.where(TIMER == t[a2[j]])[0]
+				N[0,a3[0]] = dn
+				E[0,a3[0]] = de
+				U[0,a3[0]] = du
+			print ('Data for station ' + site + ' exists during time span')
+			SID = site
+			#Output folder
+			outdir = home + '/gnssoutput'
+			if not os.path.exists(outdir):
+				os.makedirs(outdir)
+			#Day Name
+			eqname = str(struct_time[0]) + str(struct_time[1]).zfill(2) + str(struct_time[2]).zfill(2)
+			outdireq = home + '/gnssoutput/' + eqname
+			if not os.path.exists(outdireq):
+				os.makedirs(outdireq)
+			#Data Directory
+			outdirdata = home + '/gnssoutput/' + eqname + '/timeseries'
+			if not os.path.exists(outdirdata):
+				os.makedirs(outdirdata)
+			eqtime = str(struct_time[0]).zfill(4) + str(struct_time[1]).zfill(2) + str(struct_time[2]).zfill(2) + '_' + str(struct_time[3]).zfill(2) + str(struct_time[4]).zfill(2) + str(struct_time[5]).zfill(2)
+			sitefile = outdirdata + '/' + SID + '_' + str(eqtime) + '.txt'
+			print("Printing file " + sitefile)
+			sfo = open(sitefile,'w')
+			for j in range(0, int(posttimewindow)+1):
+				east = "{0:.4f}".format(float(E[0,j]))
+				north = "{0:.4f}".format(float(N[0,j]))
+				up = "{0:.4f}".format(float(U[0,j]))
+				sfo.write(str(TIMER[j])+' '+str(j)+' '+east+' '+north+' '+up+'\n')
+			sfo.close()
+			print ("Plot timeseries, 0 for no, 1 for yes:")
+			plottseries = input()
+			if (int(plottseries) == 1):
+				plotfile = outdirdata + '/' + SID + '_' + str(eqname) + '.eps'
+				gmtplotting.plottimeseries(plotfile,SID,str(eqtime),sitefile,TIMER-int(unixot),E[0,:],N[0,:],U[0,:])
+				print ("Timeseries plot created "+plotfile)
+		else:
+			print ('Data for station ' + site  + ' does not exist during time span')
+	else:
+		print("Data does not exist for station " + site)
+#################################################################################################################
+if (int(eventind) < 2):
+	[staids,stalons,stalats,staalts]=readmetadata(sitemetadata)#Read station metadata file and return all possible sites
+	slon = numpy.asarray(stalons)#Arrays of site ids and coordinates
+	slat = numpy.asarray(stalats)
+	salt = numpy.asarray(staalts)
+	sid = numpy.asarray(staids)
+	[xs,ys,zs]=GPS_tools.lla2ecef(slat,slon,salt)#ITRF coordinates of stations
+	[xeq,yeq,zeq]=GPS_tools.lla2ecef(lat,lon,dep*-1000)#ITRF coordinates of earthquake
+	XYZDist = numpy.sqrt(numpy.power(xs-xeq,2)+numpy.power(ys-yeq,2)+numpy.power(zs-zeq,2))/1000
+	a1 = numpy.where(XYZDist <= distmax)[0]
+	if (a1.size == 0):
+		print ('No stations in the distance window, ' + str(distmax) + ' km; ending modeling run. Try increasing window size. I do not suggest anything > 1000 km.')
+	else:
+		print (str(len(a1)) + ' stations available within the distance window, ' + str(distmax) + ' km')
+		client = pymongo.MongoClient()
+		db = client["gpsdatabase"]
+		N = numpy.nan*numpy.ones([len(a1),int(posttimewindow)+1+60])
+		E = numpy.nan*numpy.ones([len(a1),int(posttimewindow)+1+60])
+		U = numpy.nan*numpy.ones([len(a1),int(posttimewindow)+1+60])
+		TIMER = numpy.arange(int(unixot)-60,int(unixot)+int(posttimewindow)+1)
+		#pgdoverviewfile = outdireq + '/' + str(eqname) + '_pgdoverview.txt'
+		#pgo = open(pgdoverviewfile,'w') 	
+		for i in range(0, len(a1)):
+			site = str(sid[a1[i]])
+			currentcollection = db[site] 
+			with Monary("127.0.0.1") as monary:
+				dt0 = monary.query("gpsdatabase",site,{},["x", "y", "z", "t"],["float64"] * 4)
+			x = dt0[0]
+			y = dt0[1]
+			z = dt0[2]
+			t = dt0[3]
+			latsta = float(slat[a1[i]])
+			lonsta = float(slon[a1[i]])
+			a2 = numpy.where((t >= int(unixot)-60) & (t <= int(unixot) + int(posttimewindow)))[0]
+			a0 = numpy.where(t == int(unixot))[0]
+			if (len(a0) > 0):
+				for j in range (0, len(a2)):
+					dx = x[a2[j]] - x[a0[0]]
+					dy = y[a2[j]] - y[a0[0]]
+					dz = z[a2[j]] - z[a0[0]]
+
+					[dn,de,du] = GPS_tools.dxyz2dneu(dx,dy,dz,latsta,lonsta)
+					a3 = numpy.where(TIMER == t[a2[j]])[0]
+					N[i,a3[0]] = dn
+					E[i,a3[0]] = de
+					U[i,a3[0]] = du
+				print ('Data for station ' + str(sid[a1[i]]) + ' exists')
+				SID = str(sid[a1[i]])
+				sitefile = outdirdata + '/' + SID + '_' + str(eqname) + '.txt'
+				print("Printing file " + sitefile)
+				sfo = open(sitefile,'w')
+				for j in range(0, int(posttimewindow)+1+60):
+					east = "{0:.4f}".format(float(E[i,j]))
+					north = "{0:.4f}".format(float(N[i,j]))
+					up = "{0:.4f}".format(float(U[i,j]))
+					sfo.write(str(TIMER[j])+' '+str(j-60)+' '+east+' '+north+' '+up+'\n')
+				sfo.close()
+				if (int(plottseries) == 1):
+					plotfile = outdirdata + '/' + SID + '_' + str(eqname) + '.eps'
+					gmtplotting.plottimeseries(plotfile,SID,eqname,sitefile,TIMER-int(unixot),E[i,:],N[i,:],U[i,:])
+					print ("Timeseries plot created "+plotfile)
+			else:
+				print ('Data for station ' + str(sid[a1[i]]) + ' does not exist')
+
