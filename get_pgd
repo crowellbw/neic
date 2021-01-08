@@ -21,40 +21,44 @@ import sys
 import gmtplotting
 import warnings
 if not sys.warnoptions:
-	warnings.simplefilter("ignore")
+        warnings.simplefilter("ignore")
 sitemetadata = '/home/crowellb/PANGA/stationmetadata/siteinfo.json'
 ################################################################################################################
 print ("Welcome to model_pgd, v1.0")
 print ("Do you want to use an existing event id (enter 0), or manually enter  event information (enter 1):")
 eventind = input()
 if (int(eventind) == 0):
-	print ("Using existing event id, enter id from USGS:")
-	eventid = input()
-	print ("Using event id " + eventid)
-	a = get_usgsevent.eventinformation(eventid)
-	if (a[5] == 0):
-		print ("Event id " + eventid + " does not exist at USGS, try again")
-	if (a[5] == 1):
-		m = a[0]
-		lon = a[2]
-		lat = a[3]
-		dep = a[4]
-		ot = datetime.utcfromtimestamp(a[1]/1000)
-		unixot = int(a[1]/1000)
-		eqname = eventid
-		print ("Event id " + eventid + " found.")
-		print ("Event magnitude: " + str(m))
-		print ("Event location (lon,lat,dep(km)): " + str(lon) + ", " + str(lat) + ", " + str(dep))
-		print ("Event origin time: " + str(ot))
-		print ("Event origin time (unix): " + str(unixot))
+        print ("Using existing event id, enter id from USGS:")
+        eventid = input()
+        print ("Using event id " + eventid)
+        a = get_usgsevent.eventinformation(eventid)
+        if (a[5] == 0):
+                print ("Event id " + eventid + " does not exist at USGS, try again")
+        if (a[5] == 1):
+                m = a[0]
+                lon = a[2]
+                lat = a[3]
+                dep = a[4]
+                ot = datetime.utcfromtimestamp(a[1]/1000)
+                unixot = int(a[1]/1000)
+                eqname = eventid
+                print ("Event id " + eventid + " found.")
+                print ("Event magnitude: " + str(m))
+                print ("Event location (lon,lat,dep(km)): " + str(lon) + ", " + str(lat) + ", " + str(dep))
+                print ("Event origin time: " + str(ot))
+                print ("Event origin time (unix): " + str(unixot))
 
-		#Epicentral Distance Considered
-		print ("Distance to consider (km):")
-		distmax = input()
-		distmax = float(distmax)
-		print ("Make PGD map and loglog plot, 0 for no, 1 for yes:")
-		ploton = input()
-		ploton = int(ploton)
+                #Epicentral Distance Considered
+                print ("Distance to consider (km):")
+                distmax = input()
+                distmax = float(distmax)
+                print ("Time to use (s):")
+                timeint = input()
+                timeint = int(timeint)
+
+                print ("Make PGD map and loglog plot, 0 for no, 1 for yes:")
+                ploton = input()
+                ploton = int(ploton)
 
 if (int(eventind) == 1):
         print ("Using manually entered event")
@@ -87,100 +91,163 @@ if (int(eventind) == 1):
         ploton = input()
         ploton = int(ploton)
 if (int(eventind) < 2):
-	#Output folder
-	outdir = home + '/gnssoutput'
-	if not os.path.exists(outdir):
-		os.makedirs(outdir)
-	#Earthquake Name
-	outdireq = home + '/gnssoutput/' + eqname
-	if not os.path.exists(outdireq):
-        	os.makedirs(outdireq)
-	#Data Directory
-	outdirdata = home + '/gnssoutput/' + eqname + '/pgd'
-	if not os.path.exists(outdirdata):
-        	os.makedirs(outdirdata)
-	print ("Using output directory for PGD: " + outdirdata)
+        #Output folder
+        outdir = home + '/gnssoutput'
+        if not os.path.exists(outdir):
+                os.makedirs(outdir)
+        #Earthquake Name
+        outdireq = home + '/gnssoutput/' + eqname
+        if not os.path.exists(outdireq):
+                os.makedirs(outdireq)
+        #Data Directory
+        outdirdata = home + '/gnssoutput/' + eqname + '/pgd'
+        if not os.path.exists(outdirdata):
+                os.makedirs(outdirdata)
+        print ("Using output directory for PGD: " + outdirdata)
 #################################################################################################################
 if (int(eventind) < 2):
-	[staids,stalons,stalats,staalts]=readmetadata(sitemetadata)#Read station metadata file and return all possible sites
-	slon = numpy.asarray(stalons)#Arrays of site ids and coordinates
-	slat = numpy.asarray(stalats)
-	salt = numpy.asarray(staalts)
-	sid = numpy.asarray(staids)
-	[xs,ys,zs]=GPS_tools.lla2ecef(slat,slon,salt)#ITRF coordinates of stations
-	[xeq,yeq,zeq]=GPS_tools.lla2ecef(lat,lon,dep*-1000)#ITRF coordinates of earthquake
-	XYZDist = numpy.sqrt(numpy.power(xs-xeq,2)+numpy.power(ys-yeq,2)+numpy.power(zs-zeq,2))/1000
-	a1 = numpy.where(XYZDist <= distmax)[0]
-	if (a1.size == 0):
-		print ('No stations in the distance window, ' + str(distmax) + ' km; ending modeling run. Try increasing window size. I do not suggest anything > 1000 km.')
-	else:
-		print (str(len(a1)) + ' stations available within the distance window, ' + str(distmax) + ' km')
-		client = pymongo.MongoClient()
-		db = client["gpsdatabase"]
-		N = numpy.nan*numpy.ones([len(a1),180+1])
-		E = numpy.nan*numpy.ones([len(a1),180+1])
-		U = numpy.nan*numpy.ones([len(a1),180+1])
-		TIMER = numpy.arange(int(unixot),int(unixot)+181)
-		pgdoverviewfile = outdirdata + '/' + str(eqname) + '_pgdoverview.txt'
-		pgo = open(pgdoverviewfile,'w')
-		for i in range(0, len(a1)):
-			site = str(sid[a1[i]])
-			currentcollection = db[site]
-			with Monary("127.0.0.1") as monary:
-				dt0 = monary.query("gpsdatabase",site,{},["x", "y", "z", "t"],["float64"] * 4)
-			x = dt0[0]
-			y = dt0[1]
-			z = dt0[2]
-			t = dt0[3]
-			latsta = float(slat[a1[i]])
-			lonsta = float(slon[a1[i]])
-			a2 = numpy.where((t >= int(unixot)) & (t <= int(unixot) + 180))[0]
-			a0 = numpy.where(t == int(unixot))[0]
-			if (len(a0) > 0):
-				for j in range (0, len(a2)):
-					dx = x[a2[j]] - x[a0[0]]
-					dy = y[a2[j]] - y[a0[0]]
-					dz = z[a2[j]] - z[a0[0]]
+        [staids,stalons,stalats,staalts]=readmetadata(sitemetadata)#Read station metadata file and return all possible sites
+        slon = numpy.asarray(stalons)#Arrays of site ids and coordinates
+        slat = numpy.asarray(stalats)
+        salt = numpy.asarray(staalts)
+        sid = numpy.asarray(staids)
+        [xs,ys,zs]=GPS_tools.lla2ecef(slat,slon,salt)#ITRF coordinates of stations
+        [xeq,yeq,zeq]=GPS_tools.lla2ecef(lat,lon,dep*-1000)#ITRF coordinates of earthquake
+        XYZDist = numpy.sqrt(numpy.power(xs-xeq,2)+numpy.power(ys-yeq,2)+numpy.power(zs-zeq,2))/1000
+        a1 = numpy.where(XYZDist <= distmax)[0]
+        if (a1.size == 0):
+                print ('No stations in the distance window, ' + str(distmax) + ' km; ending modeling run. Try increasing window size. I do not suggest anything > 1000 km.')
+        else:
+                print (str(len(a1)) + ' stations available within the distance window, ' + str(distmax) + ' km')
+                client = pymongo.MongoClient()
+                db = client["gpsdatabase"]
+                N = numpy.nan*numpy.ones([len(a1),timeint+1])
+                E = numpy.nan*numpy.ones([len(a1),timeint+1])
+                U = numpy.nan*numpy.ones([len(a1),timeint+1])
+                TIMER = numpy.arange(int(unixot),int(unixot)+timeint+1)
+                pgdoverviewfile = outdirdata + '/' + str(eqname) + '_pgdoverview_'+str(timeint)+'s_'+str(int(distmax))+'km.txt'
+                pgo = open(pgdoverviewfile,'w')
+                pgdtlist = list()
+                pgdhlist = list()
+                distlist = list()
+                for i in range(0, len(a1)):
+                        site = str(sid[a1[i]])
+                        currentcollection = db[site]
+                        with Monary("127.0.0.1") as monary:
+                                dt0 = monary.query("gpsdatabase",site,{},["x", "y", "z", "t"],["float64"] * 4)
+                        x = dt0[0]
+                        y = dt0[1]
+                        z = dt0[2]
+                        t = dt0[3]
+                        latsta = float(slat[a1[i]])
+                        lonsta = float(slon[a1[i]])
+                        a2 = numpy.where((t >= int(unixot)) & (t <= int(unixot) + timeint))[0]
+                        a0 = numpy.where(t == int(unixot))[0]
+                        if (len(a0) > 0):
+                                for j in range (0, len(a2)):
+                                        dx = x[a2[j]] - x[a0[0]]
+                                        dy = y[a2[j]] - y[a0[0]]
+                                        dz = z[a2[j]] - z[a0[0]]
 
-					[dn,de,du] = GPS_tools.dxyz2dneu(dx,dy,dz,latsta,lonsta)
-					a3 = numpy.where(TIMER == t[a2[j]])[0]
-					N[i,a3[0]] = dn
-					E[i,a3[0]] = de
-					U[i,a3[0]] = du
-				print ('Data for station ' + str(sid[a1[i]]) + ' exists')
-			else:
-				print ('Data for station ' + str(sid[a1[i]]) + ' does not exist')
+                                        [dn,de,du] = GPS_tools.dxyz2dneu(dx,dy,dz,latsta,lonsta)
+                                        a3 = numpy.where(TIMER == t[a2[j]])[0]
+                                        N[i,a3[0]] = dn
+                                        E[i,a3[0]] = de
+                                        U[i,a3[0]] = du
+                                print ('Data for station ' + str(sid[a1[i]]) + ' exists')
+                        else:
+                                print ('Data for station ' + str(sid[a1[i]]) + ' does not exist')
 
-		DISPT = numpy.sqrt(numpy.power(N,2) + numpy.power(E,2) + numpy.power(U,2))
-		DISPH = numpy.sqrt(numpy.power(N,2) + numpy.power(E,2))
-		PGDT = numpy.nanmax(DISPT,axis=1)
-		PGDH = numpy.nanmax(DISPH,axis=1)
-		loneq = "{0:.4f}".format(float(lon))
-		lateq = "{0:.4f}".format(float(lat))
-		depeq = "{0:.1f}".format(float(dep))
-		pgo.write('# PGD output file for earthquake '+str(eqname)+'\n')
-		pgo.write('# Earthquake origin time (UTC): '+str(ot)+'\n')
-		pgo.write('# Earthquake longitude: '+loneq+'\n')
-		pgo.write('# Earthquake latitude: '+lateq+'\n')
-		pgo.write('# Earthquake depth (km): '+depeq+'\n')
-		pgo.write('# Columns:'+'\n')
-		pgo.write('# site id, site lon, site lat, hyp dist (km), 3d PGD (cm), Horizontal PGD (cm)'+'\n')
-		for i in range(0,len(a1)):
-			if numpy.isnan(PGDT[i]):
-				pass
-			else:
-				pgdt = "{0:.2f}".format(float(PGDT[i])*100)
-				pgdh = "{0:.2f}".format(float(PGDH[i])*100)
-				hyp = "{0:.3f}".format(float(XYZDist[a1[i]]))
-				SID = str(sid[a1[i]])
-				lonout = "{0:.4f}".format(float(slon[a1[i]]))
-				latout = "{0:.4f}".format(float(slat[a1[i]]))
-				pgo.write(SID+' '+lonout+' '+latout+' '+hyp+' '+pgdt+' '+pgdh+'\n')
-		print ('Created PGD output file ' + pgdoverviewfile)
-		pgo.close()
-		if (int(ploton) == 1):
-			plotfile = outdirdata + '/PGD_' + str(eqname) + '.eps'
-			gmtplotting.plotpgd(plotfile,eqname,pgdoverviewfile)
-			print ('Plotted PGD vs. Distance in '+plotfile)
+                DISPT = numpy.sqrt(numpy.power(N,2) + numpy.power(E,2) + numpy.power(U,2))
+                DISPH = numpy.sqrt(numpy.power(N,2) + numpy.power(E,2))
+                PGDT = numpy.nanmax(DISPT,axis=1)
+                PGDH = numpy.nanmax(DISPH,axis=1)
 
+                loneq = "{0:.4f}".format(float(lon))
+                lateq = "{0:.4f}".format(float(lat))
+                depeq = "{0:.1f}".format(float(dep))
+                #tmag = "{0:.2f}".format(float(mt))
 
+                pgo.write('# PGD output file for earthquake '+str(eqname)+'\n')
+                pgo.write('# Earthquake origin time (UTC): '+str(ot)+'\n')
+                pgo.write('# Earthquake longitude: '+loneq+'\n')
+                pgo.write('# Earthquake latitude: '+lateq+'\n')
+                pgo.write('# Earthquake depth (km): '+depeq+'\n')
+                #pgo.write('# 3D PGD Magnitude: '+tmag+'\n')
+                pgo.write('# Columns:'+'\n')
+                pgo.write('# site id, site lon, site lat, hyp dist (km), 3d PGD (cm), Horizontal PGD (cm), 3d Magnitude, Horizontal Magnitude'+'\n')
+                kind=0
+                for i in range(0,len(a1)):
+                        if numpy.isnan(PGDT[i]):
+                                pass
+                        else:
+                                kind=kind+1
+                                pgdtlist.append(float(PGDT[i]*100))
+                                pgdhlist.append(float(PGDH[i]*100))
+                                distlist.append(float(XYZDist[a1[i]]))
+                                pgdt = "{0:.2f}".format(float(PGDT[i])*100)
+                                pgdh = "{0:.2f}".format(float(PGDH[i])*100)
+                                hyp = "{0:.3f}".format(float(XYZDist[a1[i]]))
+                                SID = str(sid[a1[i]])
+                                MAGT = (math.log10(PGDT[i]*100)+6.687)/(1.500-0.214*math.log10(XYZDist[a1[i]]))
+                                MAGH = (math.log10(PGDH[i]*100)+6.687)/(1.500-0.214*math.log10(XYZDist[a1[i]]))
+                                magt = "{0:.2f}".format(float(MAGT))
+                                magh = "{0:.2f}".format(float(MAGH))
+                                lonout = "{0:.4f}".format(float(slon[a1[i]]))
+                                latout = "{0:.4f}".format(float(slat[a1[i]]))
+                                pgo.write(SID+' '+lonout+' '+latout+' '+hyp+' '+pgdt+' '+pgdh+' '+magt+' '+magh+'\n')
+                print ('Created PGD output file ' + pgdoverviewfile)
+                pgo.close()
+
+                #PGD Analyze
+                pgdanalysisfile = outdirdata + '/' + str(eqname) + '_pgdanalysis_'+str(timeint)+'s_'+str(int(distmax))+'km.txt'
+                pga = open(pgdanalysisfile,'w')
+                distarray = numpy.asarray(distlist)
+                pgdharray = numpy.asarray(pgdhlist)
+                pgdtarray = numpy.asarray(pgdtlist)
+                distarray = numpy.reshape(distarray,(kind,1))
+                pgdharray = numpy.reshape(pgdharray,(kind,1))
+                pgdtarray = numpy.reshape(pgdtarray,(kind,1))
+
+                Weight = numpy.exp(-numpy.power(distarray,2)/2/numpy.power(min(distarray),2))
+                W = numpy.zeros([len(distarray),len(distarray)])
+                for w in range(0,len(distarray)):
+                        W[w,w] = Weight[w]
+                G = 1.500-0.214*numpy.log10(distarray)
+                bt = numpy.log10(pgdtarray)+6.687
+                bh = numpy.log10(pgdharray)+6.687
+                mt= numpy.linalg.lstsq(numpy.dot(W,G),numpy.dot(W,bt))
+
+                residmt = bt - G*float(mt[0])
+                rmsmt = numpy.sqrt(numpy.sum(numpy.power(residmt,2))/len(residmt))
+                stdmt = numpy.std(residmt)
+                mh= numpy.linalg.lstsq(numpy.dot(W,G),numpy.dot(W,bh))
+                residmh = bh - G*float(mh[0])
+                rmsmh = numpy.sqrt(numpy.sum(numpy.power(residmh,2))/len(residmh))
+                stdmh = numpy.std(residmh)
+                logh = numpy.log10(pgdharray)
+                logt = numpy.log10(pgdtarray)
+                logd = numpy.log10(distarray)
+                hslope = numpy.sum((logh-numpy.mean(logh))*(logd-numpy.mean(logd)))/numpy.sum(numpy.power(logd-numpy.mean(logd),2))
+                tslope = numpy.sum((logt-numpy.mean(logt))*(logd-numpy.mean(logd)))/numpy.sum(numpy.power(logd-numpy.mean(logd),2))
+                pga.write('# PGD analysis file for earthquake '+str(eqname)+'\n')
+                pga.write('# Earthquake origin time (UTC): '+str(ot)+'\n')
+                pga.write('# Earthquake longitude: '+loneq+'\n')
+                pga.write('# Earthquake latitude: '+lateq+'\n')
+                pga.write('# Earthquake depth (km): '+depeq+'\n')
+                pga.write('# Columns:'+'\n')
+                pga.write('# num sites, 3d Magnitude, Horizontal Magnitude, 3d RMS, Horizontal RMS, 3d STD, Horizontal STD,  3d Slope, Horizontal Slope'+'\n')
+                MT = "{0:.2f}".format(float(mt[0]))
+                MTR = "{0:.2f}".format(float(rmsmt))
+                MH = "{0:.2f}".format(float(mh[0]))
+                MHR = "{0:.2f}".format(float(rmsmh))
+                HS = "{0:.4f}".format(float(hslope))
+                TS = "{0:.4f}".format(float(tslope))
+                MTSTD = "{0:.2f}".format(float(stdmt))
+                MHSTD = "{0:.2f}".format(float(stdmh))
+                pga.write(str(len(pgdhlist))+' '+MT+' '+MH+' '+MTR+' '+MHR+' '+MTSTD+' '+MHSTD+' '+TS+' '+HS+'\n')
+
+                if (int(ploton) == 1):
+                        plotfile = outdirdata + '/PGD_' + str(eqname) + '_'+str(timeint)+'s_'+str(int(distmax))+'km.eps'
+                        gmtplotting.plotpgd(plotfile,eqname,pgdoverviewfile,lon,lat,int(timeint),int(distmax),MH,MHSTD)
+                        print ('Plotted PGD vs. Distance in '+plotfile)
